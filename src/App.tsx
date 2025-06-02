@@ -1,5 +1,4 @@
-// import TextToSpeech from "./tts"
-import TTSConverter from "./tts2"
+import TTSConverter from "./tts"
 
 
 function App() {

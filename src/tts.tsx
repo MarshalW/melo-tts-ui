@@ -9,7 +9,12 @@ const { Item } = Form;
 
 const TTSConverter = () => {
     const [text, setText] = useState<string>('');
-    const [apiUrl, setApiUrl] = useState<string>('http://localhost:5173/convert/tts');
+    // 动态设置API URL，根据环境变量自动切换
+    const [apiUrl, setApiUrl] = useState<string>(
+        import.meta.env.DEV
+            ? '/convert/tts'
+            : import.meta.env.VITE_TTS_SERVER || '/convert/tts'
+    );
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [progress, setProgress] = useState<number>(0);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -19,22 +24,36 @@ const TTSConverter = () => {
     const audioRef = useRef<HTMLAudioElement>(null);
     const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
-    // URL验证函数（添加参数类型）
+    // 修改后的URL验证函数（支持相对路径）
     const validateUrl = (url: string): boolean => {
         try {
-            // 基本URL格式验证
-            const urlPattern = /^(https?|ftp):\/\/[^\s/$.?#].[^\s]*$/i;
+            // 扩展正则表达式：允许相对路径（以/开头）和绝对URL
+            const urlPattern = /^(?:(?:https?|ftp):\/\/[^\s/$.?#][^\s]*|\/[\w\-./]*[^\s]*)$/i;
+
             if (!urlPattern.test(url)) {
-                setUrlError('URL格式不正确，请使用http://或https://开头');
+                setUrlError('URL格式不正确，请使用http:///https://开头或/开头的相对路径');
                 return false;
             }
 
-            // 创建URL对象进行更严格的验证
+            // 处理相对路径（无需完整URL验证）
+            if (url.startsWith('/')) {
+                // 可选：检查相对路径的格式（如不允许连续斜杠）
+                if (url.includes('//')) {
+                    setUrlError('相对路径不能包含连续斜杠(//)');
+                    return false;
+                }
+                setUrlError('');
+                return true;
+            }
+
+            // 绝对URL使用原生URL对象验证
             new URL(url);
             setUrlError('');
             return true;
         } catch (e) {
-            setUrlError('无效的URL，请检查格式');
+            setUrlError(url.startsWith('/')
+                ? '无效的相对路径'
+                : '无效的绝对URL，请检查格式');
             return false;
         }
     };
