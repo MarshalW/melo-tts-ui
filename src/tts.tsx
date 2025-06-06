@@ -1,33 +1,95 @@
-import { useState, useRef } from 'react';
-import type { ChangeEvent } from 'react';
-import { Button, Input, Card, Row, Col, Space, Alert, Progress, Typography, Form } from 'antd';
-import { AudioOutlined, PlayCircleOutlined, PauseCircleOutlined, DownloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { useState, useRef, useEffect } from 'react';
+import '@ant-design/v5-patch-for-react-19';
+import {
+    Button, Input, Card, Row, Col, Space, Alert, Progress,
+    Typography, Form, Select, Popconfirm, Modal, List
+} from 'antd';
+import {
+    AudioOutlined, PlayCircleOutlined, PauseCircleOutlined,
+    DownloadOutlined, SettingOutlined, PlusOutlined,
+    DeleteOutlined, EditOutlined
+} from '@ant-design/icons';
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
 const { Item } = Form;
+const { Option } = Select;
+
+interface ApiConfig {
+    id: string;
+    title: string;
+    url: string;
+}
+
+// 定义存储在localStorage中的数据结构
+interface TtsSettings {
+    apiConfigs: ApiConfig[];
+    selectedApiId: string;
+}
 
 const TTSConverter = () => {
     const [text, setText] = useState<string>('');
-    // 动态设置API URL，根据环境变量自动切换
-    const [apiUrl, setApiUrl] = useState<string>(
-        import.meta.env.DEV
-            ? '/convert/tts'
-            : import.meta.env.VITE_TTS_SERVER || '/convert/tts'
-    );
+    const [apiConfigs, setApiConfigs] = useState<ApiConfig[]>([]);
+    const [selectedApiId, setSelectedApiId] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [progress, setProgress] = useState<number>(0);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [urlError, setUrlError] = useState<string>('');
     const [showSettings, setShowSettings] = useState<boolean>(false);
+    const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
+    const [currentConfig, setCurrentConfig] = useState<ApiConfig | null>(null);
     const audioRef = useRef<HTMLAudioElement>(null);
     const [isPlaying, setIsPlaying] = useState<boolean>(false);
+    
+    // 从localStorage加载设置
+    useEffect(() => {
+        const savedSettings = localStorage.getItem('ttsSettings');
+        if (savedSettings) {
+            try {
+                const settings: TtsSettings = JSON.parse(savedSettings);
+                setApiConfigs(settings.apiConfigs);
+                setSelectedApiId(settings.selectedApiId);
+            } catch (e) {
+                console.error('Failed to parse saved settings', e);
+                initializeDefaultSettings();
+            }
+        } else {
+            initializeDefaultSettings();
+        }
+    }, []);
 
-    // 修改后的URL验证函数（支持相对路径）
+    // 保存设置到localStorage
+    useEffect(() => {
+        if (apiConfigs.length > 0 && selectedApiId) {
+            const settings: TtsSettings = {
+                apiConfigs,
+                selectedApiId
+            };
+            localStorage.setItem('ttsSettings', JSON.stringify(settings));
+        }
+    }, [apiConfigs, selectedApiId]);
+
+    // 初始化默认设置
+    const initializeDefaultSettings = () => {
+        const defaultConfig: ApiConfig = {
+            id: 'default',
+            title: '默认配置',
+            url: import.meta.env.DEV
+                ? '/convert/tts'
+                : import.meta.env.VITE_TTS_SERVER || '/convert/tts'
+        };
+        
+        setApiConfigs([defaultConfig]);
+        setSelectedApiId('default');
+    };
+
+    // 获取当前选中的 API 配置
+    const selectedConfig = apiConfigs.find(config => config.id === selectedApiId) || apiConfigs[0];
+
+    // URL 验证函数
     const validateUrl = (url: string): boolean => {
         try {
-            // 扩展正则表达式：允许相对路径（以/开头）和绝对URL
             const urlPattern = /^(?:(?:https?|ftp):\/\/[^\s/$.?#][^\s]*|\/[\w\-./]*[^\s]*)$/i;
 
             if (!urlPattern.test(url)) {
@@ -35,19 +97,11 @@ const TTSConverter = () => {
                 return false;
             }
 
-            // 处理相对路径（无需完整URL验证）
-            if (url.startsWith('/')) {
-                // 可选：检查相对路径的格式（如不允许连续斜杠）
-                if (url.includes('//')) {
-                    setUrlError('相对路径不能包含连续斜杠(//)');
-                    return false;
-                }
-                setUrlError('');
-                return true;
+            if (url.startsWith('/') && url.includes('//')) {
+                setUrlError('相对路径不能包含连续斜杠(//)');
+                return false;
             }
 
-            // 绝对URL使用原生URL对象验证
-            new URL(url);
             setUrlError('');
             return true;
         } catch (e) {
@@ -64,8 +118,8 @@ const TTSConverter = () => {
             return;
         }
 
-        // 验证API URL
-        if (!validateUrl(apiUrl)) {
+        // 验证当前选中的 API URL
+        if (!selectedConfig || !validateUrl(selectedConfig.url)) {
             return;
         }
 
@@ -74,7 +128,6 @@ const TTSConverter = () => {
             setProgress(10);
             setError(null);
 
-            // 模拟转换过程
             const progressInterval = setInterval(() => {
                 setProgress(prev => {
                     if (prev >= 90) {
@@ -85,8 +138,8 @@ const TTSConverter = () => {
                 });
             }, 300);
 
-            // 发送请求到 TTS API
-            const response = await fetch(apiUrl, {
+            // 使用当前选中的 API 配置
+            const response = await fetch(selectedConfig.url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -105,7 +158,6 @@ const TTSConverter = () => {
             const url = URL.createObjectURL(blob);
             setAudioUrl(url);
 
-            // 自动播放
             setTimeout(() => {
                 if (audioRef.current) {
                     audioRef.current.play();
@@ -114,7 +166,6 @@ const TTSConverter = () => {
             }, 300);
 
         } catch (err) {
-            // 安全处理unknown类型的错误
             const errorMessage = err instanceof Error ? err.message : '发生未知错误';
             setError(errorMessage);
         } finally {
@@ -145,11 +196,70 @@ const TTSConverter = () => {
         document.body.removeChild(link);
     };
 
-    // 添加事件参数类型
-    const handleUrlChange = (e: ChangeEvent<HTMLInputElement>) => {
-        const newUrl = e.target.value;
-        setApiUrl(newUrl);
-        validateUrl(newUrl);
+    // 打开配置模态框（用于添加或编辑）
+    const openConfigModal = (config: ApiConfig | null = null) => {
+        setCurrentConfig(config);
+        setShowConfigModal(true);
+        setUrlError('');
+    };
+
+    // 保存配置（添加或更新）
+    const handleSaveConfig = () => {
+        if (!currentConfig || !currentConfig.title.trim() || !currentConfig.url.trim()) {
+            setUrlError('配置名称和URL不能为空');
+            return;
+        }
+
+        if (!validateUrl(currentConfig.url)) {
+            return;
+        }
+
+        // 更新现有配置
+        if (currentConfig.id && currentConfig.id !== 'new') {
+            setApiConfigs(apiConfigs.map(config =>
+                config.id === currentConfig.id ? currentConfig : config
+            ));
+        }
+        // 添加新配置
+        else {
+            const newId = `config-${Date.now()}`;
+            const newConfig = {
+                ...currentConfig,
+                id: newId
+            };
+            setApiConfigs([...apiConfigs, newConfig]);
+            setSelectedApiId(newId); // 自动选中新配置
+        }
+
+        setShowConfigModal(false);
+        setCurrentConfig(null);
+    };
+
+    // 删除 API 配置
+    const handleDeleteConfig = (id: string) => {
+        if (apiConfigs.length <= 1) {
+            setUrlError('至少需要保留一个配置');
+            return;
+        }
+
+        const newConfigs = apiConfigs.filter(config => config.id !== id);
+        setApiConfigs(newConfigs);
+
+        // 如果删除的是当前选中的配置，则切换到第一个配置
+        if (id === selectedApiId) {
+            setSelectedApiId(newConfigs[0].id);
+        }
+    };
+
+    // 处理配置选择变化
+    const handleConfigChange = (value: string) => {
+        setSelectedApiId(value);
+    };
+
+    // Card头部样式对象
+    const cardHeaderStyle = {
+        backgroundColor: '#f0f5ff',
+        borderBottom: '1px solid #e8e8e8'
     };
 
     return (
@@ -170,35 +280,132 @@ const TTSConverter = () => {
 
             {showSettings && (
                 <Card
-                    title="API设置"
-                    bordered={false}
+                    title="API配置管理"
+                    variant="borderless"
                     style={{ marginBottom: 24 }}
-                    headStyle={{ backgroundColor: '#f0f5ff', borderBottom: '1px solid #e8e8e8' }}
+                    styles={{ header: cardHeaderStyle }}
+                    extra={
+                        <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            onClick={() => openConfigModal({
+                                id: 'new',
+                                title: '',
+                                url: ''
+                            })}
+                        >
+                            添加配置
+                        </Button>
+                    }
                 >
                     <Form layout="vertical">
                         <Item
-                            label="TTS转换接口URL"
-                            validateStatus={urlError ? 'error' : ''}
-                            help={urlError || '请输入有效的API端点URL'}
+                            label="当前使用的API配置"
+                            style={{ marginBottom: 24 }}
                         >
-                            <Input
-                                value={apiUrl}
-                                onChange={handleUrlChange}
-                                placeholder="例如: http://localhost:7777/convert/tts"
-                                onBlur={() => validateUrl(apiUrl)}
+                            <Select
+                                value={selectedApiId}
+                                onChange={handleConfigChange}
+                                style={{ width: '100%' }}
+                            >
+                                {apiConfigs.map(config => (
+                                    <Option key={config.id} value={config.id}>
+                                        {config.title} ({config.url})
+                                    </Option>
+                                ))}
+                            </Select>
+                        </Item>
+
+                        <Item label="现有配置列表">
+                            <List
+                                itemLayout="horizontal"
+                                dataSource={apiConfigs}
+                                renderItem={(config) => (
+                                    <List.Item
+                                        actions={[
+                                            <Button
+                                                type="text"
+                                                icon={<EditOutlined />}
+                                                onClick={() => openConfigModal(config)}
+                                            />,
+                                            <Popconfirm
+                                                title="确定要删除此配置吗？"
+                                                onConfirm={() => handleDeleteConfig(config.id)}
+                                                okText="确定"
+                                                cancelText="取消"
+                                                disabled={config.id === 'default'}
+                                            >
+                                                <Button
+                                                    type="text"
+                                                    icon={<DeleteOutlined />}
+                                                    danger
+                                                    disabled={config.id === 'default'}
+                                                />
+                                            </Popconfirm>
+                                        ]}
+                                    >
+                                        <List.Item.Meta
+                                            title={config.title}
+                                            description={config.url}
+                                        />
+                                    </List.Item>
+                                )}
                             />
                         </Item>
-                        <Text type="secondary">
-                            提示: 确保URL格式正确并以http://或https://开头
-                        </Text>
                     </Form>
                 </Card>
             )}
 
+            {/* 配置编辑/添加模态框 */}
+            <Modal
+                title={currentConfig?.id === 'new' ? '添加新API配置' : '编辑API配置'}
+                open={showConfigModal}
+                onOk={handleSaveConfig}
+                onCancel={() => {
+                    setShowConfigModal(false);
+                    setCurrentConfig(null);
+                    setUrlError('');
+                }}
+                okText={currentConfig?.id === 'new' ? '添加' : '保存'}
+                cancelText="取消"
+            >
+                <Form layout="vertical">
+                    <Item
+                        label="配置名称"
+                        required
+                    >
+                        <Input
+                            value={currentConfig?.title || ''}
+                            onChange={(e) => setCurrentConfig({
+                                ...currentConfig!,
+                                title: e.target.value
+                            })}
+                            placeholder="请输入配置名称"
+                        />
+                    </Item>
+                    <Item
+                        label="API URL"
+                        required
+                        validateStatus={urlError ? 'error' : ''}
+                        help={urlError || '请输入有效的API端点URL'}
+                    >
+                        <Input
+                            value={currentConfig?.url || ''}
+                            onChange={(e) => setCurrentConfig({
+                                ...currentConfig!,
+                                url: e.target.value
+                            })}
+                            placeholder="例如: http://localhost:7777/convert/tts"
+                            onBlur={() => currentConfig?.url && validateUrl(currentConfig.url)}
+                        />
+                    </Item>
+                </Form>
+            </Modal>
+
             <Card
-                title="输入文本"
-                bordered={false}
-                headStyle={{ backgroundColor: '#f0f5ff', borderBottom: '1px solid #e8e8e8' }}
+                title={`输入文本`}
+                variant="borderless"
+                styles={{ header: cardHeaderStyle }}
             >
                 <TextArea
                     value={text}
@@ -217,7 +424,7 @@ const TTSConverter = () => {
                         size="large"
                         style={{ width: 200, height: 46 }}
                     >
-                        {isLoading ? '转换中...' : '转换为语音'}
+                        {isLoading ? `转换中@${selectedConfig?.title || ''}...` : `转换为语音@${selectedConfig?.title || ''}`}
                     </Button>
                 </Row>
             </Card>
@@ -248,9 +455,9 @@ const TTSConverter = () => {
             {audioUrl && !isLoading && (
                 <Card
                     title="语音输出"
-                    bordered={false}
+                    variant="borderless"
                     style={{ marginTop: 24 }}
-                    headStyle={{ backgroundColor: '#f0f5ff', borderBottom: '1px solid #e8e8e8' }}
+                    styles={{ header: cardHeaderStyle }}
                 >
                     <Row align="middle" gutter={16}>
                         <Col flex="auto">
